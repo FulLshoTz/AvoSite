@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diogo Rodrigues — Live</title>
+  <meta name="description" content="Se estiver em direto, mostra o vídeo com botões COMEÇAR, PARAR e Mandar para a TV.">
+  <style>
+    html,body{margin:0;padding:0;background:#0b0f1a;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto;min-height:100%}
+    .wrap{max-width:960px;margin:0 auto;padding:24px}
+    .heading{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+    .badge{display:inline-block;background:#16a34a;color:#fff;border-radius:999px;padding:4px 10px;font-weight:700;font-size:13px}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;background:#000}
+    .btn{border:none;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer}
+    .btn-primary{background:#ffffff;color:#000}
+    .btn-danger{background:#ef4444;color:#fff}
+    .btn-cast{background:#ff3b30;color:#fff}
+    .card{background:#0f1424;border:1px solid #24304a;border-radius:16px;padding:16px}
+  </style>
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Diogo Rodrigues</h1>
+    <div id="container"></div>
+    <p id="offline" style="display:none;color:#9fb1d1">Ainda não estou pronto</p>
+    <p id="err" style="display:none;color:#ff7171"></p>
+  </div>
+<script>
+let currentVideoId=null, currentUrl=null, player=null;
+function renderLive(videoId){
+  const c=document.getElementById('container');
+  c.innerHTML=`
+    <div class="heading"><span class="badge">🟢 Em direto agora</span></div>
+    <div class="card">
+      <div id="ytplayer"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="btnStart" class="btn btn-primary">COMEÇAR</button>
+        <button id="btnStop" class="btn btn-danger">PARAR</button>
+        <button id="btnCast" class="btn btn-cast">📺 Mandar para a TV</button>
+      </div>
+    </div>`;
+  player = new YT.Player('ytplayer',{videoId,playerVars:{autoplay:0,rel:0,modestbranding:1}});
+  document.getElementById('btnStart').onclick=()=>{try{player.playVideo();}catch{}};
+  document.getElementById('btnStop').onclick =()=>{try{player.pauseVideo();}catch{}};
+  document.getElementById('btnCast').onclick =castToTv;
+}
+function renderOffline(){document.getElementById('container').innerHTML='';document.getElementById('offline').style.display='block';}
+async function fetchLive(){
+  document.getElementById('offline').style.display='none';document.getElementById('err').style.display='none';
+  try{
+    const r=await fetch('/api/live'); const data=await r.json();
+    if(data.live&&data.videoId){currentUrl=data.url;currentVideoId=data.videoId;renderLive(currentVideoId);} else {renderOffline();}
+  }catch(e){document.getElementById('err').textContent='Erro ao verificar live.';document.getElementById('err').style.display='block';renderOffline();}
+}
+function castAvailable(){return !!(window.cast&&window.cast.framework);}
+async function castToTv(){
+  if(!currentVideoId) return;
+  if(castAvailable()){
+    const ctx=cast.framework.CastContext.getInstance();
+    try{
+      ctx.setOptions({receiverApplicationId:chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,autoJoinPolicy:chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED});
+      await ctx.requestSession();
+      const session=ctx.getCurrentSession(); if(!session) throw new Error('Sem sessão de cast.');
+      const mediaInfo=new chrome.cast.media.MediaInfo(`https://www.youtube.com/watch?v=${currentVideoId}`,'video/*');
+      const req=new chrome.cast.media.LoadRequest(mediaInfo);
+      await session.loadMedia(req);
+    }catch(e){/* sem fallback */}
+  }
+}
+fetchLive();
+</script>
+</body>
+</html>
