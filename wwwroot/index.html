@@ -29,7 +29,9 @@
     <p id="err" style="display:none;color:#ff7171"></p>
   </div>
 <script>
-let currentVideoId=null, currentUrl=null, player=null;
+let currentVideoId = null, currentUrl = null, player = null;
+let isStarting = false; // evita cliques duplos
+
 function renderLive(videoId){
   const c=document.getElementById('container');
   c.innerHTML=`
@@ -43,33 +45,63 @@ function renderLive(videoId){
       </div>
     </div>`;
   player = new YT.Player('ytplayer',{videoId,playerVars:{autoplay:0,rel:0,modestbranding:1}});
-  document.getElementById('btnStart').onclick=()=>{try{player.playVideo();}catch{}};
-  document.getElementById('btnStop').onclick =()=>{try{player.pauseVideo();}catch{}};
-  document.getElementById('btnCast').onclick =castToTv;
+  
+  document.getElementById('btnStart').onclick = () => {
+    if (isStarting) return;
+    isStarting = true;
+    try { player.playVideo(); } catch {}
+    setTimeout(() => isStarting = false, 1200);
+  };
+  
+  document.getElementById('btnStop').onclick = () => { try { player.pauseVideo(); } catch {} };
+  document.getElementById('btnCast').onclick = castToTv;
 }
-function renderOffline(){document.getElementById('container').innerHTML='';document.getElementById('offline').style.display='block';}
+
+function renderOffline(){
+  document.getElementById('container').innerHTML='';
+  document.getElementById('offline').style.display='block';
+}
+
 async function fetchLive(){
-  document.getElementById('offline').style.display='none';document.getElementById('err').style.display='none';
+  document.getElementById('offline').style.display='none';
+  document.getElementById('err').style.display='none';
   try{
-    const r=await fetch('/api/live'); const data=await r.json();
-    if(data.live&&data.videoId){currentUrl=data.url;currentVideoId=data.videoId;renderLive(currentVideoId);} else {renderOffline();}
-  }catch(e){document.getElementById('err').textContent='Erro ao verificar live.';document.getElementById('err').style.display='block';renderOffline();}
+    const r = await fetch('/api/live');
+    const data = await r.json();
+    if (data.live && data.videoId) {
+      currentUrl = data.url;
+      currentVideoId = data.videoId;
+      renderLive(currentVideoId);
+    } else {
+      renderOffline();
+    }
+  } catch(e) {
+    document.getElementById('err').textContent='Erro ao verificar live.';
+    document.getElementById('err').style.display='block';
+    renderOffline();
+  }
 }
+
 function castAvailable(){return !!(window.cast&&window.cast.framework);}
 async function castToTv(){
   if(!currentVideoId) return;
   if(castAvailable()){
     const ctx=cast.framework.CastContext.getInstance();
     try{
-      ctx.setOptions({receiverApplicationId:chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,autoJoinPolicy:chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED});
+      ctx.setOptions({
+        receiverApplicationId:chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy:chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+      });
       await ctx.requestSession();
-      const session=ctx.getCurrentSession(); if(!session) throw new Error('Sem sessão de cast.');
+      const session=ctx.getCurrentSession();
+      if(!session) throw new Error('Sem sessão de cast.');
       const mediaInfo=new chrome.cast.media.MediaInfo(`https://www.youtube.com/watch?v=${currentVideoId}`,'video/*');
       const req=new chrome.cast.media.LoadRequest(mediaInfo);
       await session.loadMedia(req);
     }catch(e){/* sem fallback */}
   }
 }
+
 fetchLive();
 </script>
 </body>
