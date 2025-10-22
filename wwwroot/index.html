@@ -17,21 +17,91 @@
     .btn-danger{background:#ef4444;color:#fff}
     .btn-cast{background:#ff3b30;color:#fff}
     .card{background:#0f1424;border:1px solid #24304a;border-radius:16px;padding:16px}
+    .muted{color:#9fb1d1}
+    .error{color:#ff7171}
   </style>
+  <!-- Google Cast Sender SDK (HTTPS/local) -->
   <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+  <!-- YouTube IFrame API para controlar play/pause -->
   <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
   <div class="wrap">
     <h1>Diogo Rodrigues</h1>
     <div id="container"></div>
-    <p id="offline" style="display:none;color:#9fb1d1">Ainda não estou pronto</p>
-    <p id="err" style="display:none;color:#ff7171"></p>
+    <p id="offline" class="muted" style="display:none">Ainda não estou pronto</p>
+    <p id="err" class="error" style="display:none"></p>
   </div>
+
 <script>
 let currentVideoId = null, currentUrl = null, player = null;
 let isStarting = false; // evita cliques duplos
 
+// ---------- CAST CONFIG (YouTube Receiver) ----------
+function setupCast() {
+  if (!window.cast || !window.cast.framework) return;
+  const ctx = cast.framework.CastContext.getInstance();
+  ctx.setOptions({
+    receiverApplicationId: '233637DE', // YouTube Receiver App ID
+    autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+    resumeSavedSession: true
+  });
+
+  // Se a sessão foi retomada (TV já escolhida antes) e já há live,
+  // envia logo o vídeo para a TV sem sair do site.
+  ctx.addEventListener(
+    cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+    (e) => {
+      if (e.sessionState === cast.framework.SessionState.SESSION_RESUMED && currentVideoId) {
+        castToTv();
+      }
+    }
+  );
+}
+
+// Chamado pelo SDK quando está disponível
+window.__onGCastApiAvailable = function(isAvailable) {
+  if (isAvailable) setupCast();
+};
+
+// Envia o videoId diretamente para a app YouTube da TV
+async function castToTv() {
+  if (!currentVideoId) return;
+  if (!(window.cast && window.cast.framework)) return; // sem SDK, não faz nada
+
+  const ctx = cast.framework.CastContext.getInstance();
+  try {
+    // Pede/recupera sessão (se já houve TV escolhida, pode reconectar sem dialog)
+    await ctx.requestSession();
+    const session = ctx.getCurrentSession();
+    if (!session) return;
+
+    // Canal oficial do YouTube no Cast
+    const YT_NS = 'urn:x-cast:com.google.youtube.mdx';
+    const msg = { type: 'flingVideo', data: { videoId: currentVideoId } };
+
+    // Tenta via namespace do YouTube
+    session.sendMessage(YT_NS, msg,
+      () => { /* ok */ },
+      async () => {
+        // Fallback: alguns receivers aceitam carregar o URL via media.load
+        try {
+          const mediaInfo = new chrome.cast.media.MediaInfo(
+            `https://www.youtube.com/watch?v=${currentVideoId}`, 'video/*'
+          );
+          const req = new chrome.cast.media.LoadRequest(mediaInfo);
+          await session.loadMedia(req);
+        } catch(e) {
+          // como pediste: não abrimos nova aba; simplesmente não fazemos nada
+        }
+      }
+    );
+  } catch (e) {
+    // se cancelar o dialog / sem TVs: não faz nada
+  }
+}
+
+// ---------- UI / PLAYER ----------
 function renderLive(videoId){
   const c=document.getElementById('container');
   c.innerHTML=`
@@ -44,15 +114,19 @@ function renderLive(videoId){
         <button id="btnCast" class="btn btn-cast">📺 Mandar para a TV</button>
       </div>
     </div>`;
-  player = new YT.Player('ytplayer',{videoId,playerVars:{autoplay:0,rel:0,modestbranding:1}});
-  
+
+  player = new YT.Player('ytplayer', {
+    videoId: videoId,
+    playerVars: { autoplay: 0, rel: 0, modestbranding: 1 }
+  });
+
   document.getElementById('btnStart').onclick = () => {
     if (isStarting) return;
     isStarting = true;
     try { player.playVideo(); } catch {}
     setTimeout(() => isStarting = false, 1200);
   };
-  
+
   document.getElementById('btnStop').onclick = () => { try { player.pauseVideo(); } catch {} };
   document.getElementById('btnCast').onclick = castToTv;
 }
@@ -62,11 +136,13 @@ function renderOffline(){
   document.getElementById('offline').style.display='block';
 }
 
+// ---------- DATA ----------
 async function fetchLive(){
   document.getElementById('offline').style.display='none';
   document.getElementById('err').style.display='none';
+
   try{
-    const r = await fetch('/api/live');
+    const r = await fetch('/api/live', { cache: 'no-store' });
     const data = await r.json();
     if (data.live && data.videoId) {
       currentUrl = data.url;
@@ -82,26 +158,7 @@ async function fetchLive(){
   }
 }
 
-function castAvailable(){return !!(window.cast&&window.cast.framework);}
-async function castToTv(){
-  if(!currentVideoId) return;
-  if(castAvailable()){
-    const ctx=cast.framework.CastContext.getInstance();
-    try{
-      ctx.setOptions({
-        receiverApplicationId:chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-        autoJoinPolicy:chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
-      });
-      await ctx.requestSession();
-      const session=ctx.getCurrentSession();
-      if(!session) throw new Error('Sem sessão de cast.');
-      const mediaInfo=new chrome.cast.media.MediaInfo(`https://www.youtube.com/watch?v=${currentVideoId}`,'video/*');
-      const req=new chrome.cast.media.LoadRequest(mediaInfo);
-      await session.loadMedia(req);
-    }catch(e){/* sem fallback */}
-  }
-}
-
+// Arranque
 fetchLive();
 </script>
 </body>
